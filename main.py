@@ -2,7 +2,7 @@
 
 from telebot.async_telebot import AsyncTeleBot
 from telebot import types
-from config import API_TOKEN, PHONE_NUMBER_FORMAT
+from config import API_TOKEN, PHONE_NUMBER_FORMAT, INTEGER_FORMAT
 import re
 import asyncio
 import random
@@ -53,6 +53,13 @@ async def remove_inline_reply_markup(call):
 
 # Инициализация бота
 bot = AsyncTeleBot(API_TOKEN)
+
+# Создание клавиатуры для отмены действий
+cancel_keyboard = types.InlineKeyboardMarkup()
+cancel_keyboard.add(
+	types.InlineKeyboardButton(
+		text = '❌ Отменить действие',
+		callback_data = 'cancel'))
 
 # Обработка команд /start и /help
 @bot.message_handler(commands=['start', 'help'])
@@ -111,15 +118,37 @@ async def deauthorize_user(message):
 		text=f'Вы были деавторизованы!',
 		reply_markup=types.ReplyKeyboardRemove())
 
+@bot.message_handler(commands=['reset'])
+async def restart_session(message):
+	Postgre.set_chat_state(message.chat.id, '')
+	await bot.send_message(
+		message.chat.id,
+		text = 'Перезапуск сессии...')
+	await send_welcome(message)
+
 # обработка контактов, которая должна происходить только при и для авторизации
 @bot.message_handler(content_types=['contact'])
 async def authorize_user(message):
 	if message.from_user.id == message.contact.user_id:
-		Postgre.link_chat_to_user(message.chat.id, message.contact.phone_number)
-		print(f'Linked {message.contact.phone_number}!')
+		phone_numbers_list = tuple(phone_number 
+			for _, phone_number, _, _, _ 
+			in Postgre.get_users())
+		parsed_phone_number = (('' 
+				if message.contact.phone_number.startswith('+') 
+				else '+') 
+			+ message.contact.phone_number)
+		if parsed_phone_number not in phone_numbers_list:
+			print(f'{message.contact.phone_number} not in DB!')
+			await bot.send_message(
+				message.chat.id,
+				text = 'Вашего номера нет в базе... 😭',
+				reply_markup = types.ReplyKeyboardRemove())
+			return
+		Postgre.link_chat_to_user(message.chat.id, parsed_phone_number)
+		print(f'Linked {parsed_phone_number}!')
 		await bot.send_message(
 			message.chat.id,
-			text=f'Авторизация прошла успешно! Ваш аккаунт привязан к номеру {message.contact.phone_number}.',
+			text=f'Авторизация прошла успешно! Ваш аккаунт привязан к номеру {parsed_phone_number}.',
 			reply_markup=types.ReplyKeyboardRemove())
 		await send_welcome(message)
 	else:
@@ -131,7 +160,7 @@ async def authorize_user(message):
 			text='Это не ваш контакт! Используйте свой контакт для авторизации.',
 			reply_markup=markup)
 
-# Обработка кнопок
+# Обработка кнопок и ввода текста
 @bot.message_handler(content_types=['text'])
 async def process_message(message):
 	user_id = Postgre.get_user_id_for_chat(message.chat.id)
@@ -142,22 +171,16 @@ async def process_message(message):
 
 	if Postgre.is_admin(user_id):
 		phone_number_regexp = re.compile(PHONE_NUMBER_FORMAT)
+		integer_regexp = re.compile(INTEGER_FORMAT)
 
 		state = Postgre.get_chat_state(message.chat.id)
-
-		# Создание клавиатуры для отмены действий
-		cancel_keyboard = types.InlineKeyboardMarkup()
-		cancel_keyboard.add(
-			types.InlineKeyboardButton(
-				text = '❌ Отменить действие',
-				callback_data = 'cancel'))
 
 		if state is not None and state != '':
 
 			# Обработка состояний
 			if state.startswith('ADD_USER'):
 				if state.startswith('ADD_USER_PHONE'):
-					if phone_number_regexp.match(message.text):
+					if phone_number_regexp.fullmatch(message.text):
 						Postgre.set_chat_state(message.chat.id, 'ADD_USER_IS_ADMIN,' + message.text)
 						await bot.send_message(
 							message.chat.id, 
@@ -177,7 +200,7 @@ async def process_message(message):
 						return
 	
 					Postgre.set_chat_state(message.chat.id, ','.join(('ADD_USER_DISCOUNT', parsed_phone, new_user_is_admin)))
-					discounts_list = Postgre.get_discounts_list()
+					discounts_list = Postgre.get_discounts()
 					discounts_list_str = '\n'.join((f'{discount_id}) {discount_name}' for discount_id, discount_name in discounts_list))
 					await bot.send_message(
 						message.chat.id, 
@@ -185,7 +208,7 @@ async def process_message(message):
 						reply_markup = cancel_keyboard)
 				if state.startswith('ADD_USER_DISCOUNT'):
 					_, parsed_phone, parsed_new_user_is_admin = state.split(',')
-					if message.text in (str(discount_id) for discount_id, _ in Postgre.get_discounts_list()):
+					if message.text in (str(discount_id) for discount_id, _ in Postgre.get_discounts()):
 						Postgre.add_user(parsed_phone, parsed_new_user_is_admin, message.text)
 						await bot.send_message(
 							message.chat.id,
@@ -199,6 +222,106 @@ async def process_message(message):
 				await bot.send_message(
 					message.chat.id,
 					text = 'Завершите или отмените удаление перед выполнением других действий')
+			if state.startswith('UPDATE_USER'):
+				if state.startswith('UPDATE_USER_USER_SELECT'):
+					await bot.send_message(
+						message.chat.id,
+						text = 'Завершите изменение тарифа пользователя или отмените операцию для выполнения других действий')
+				if state.startswith('UPDATE_USER_TARIFF'):
+					if message.text in (str(discount_id) for discount_id, _ in Postgre.get_discounts()):
+						user_id = state.split(',')[1]
+						Postgre.update_user_tariff(user_id, message.text)
+						Postgre.set_chat_state(message.chat.id, '')
+						await bot.send_message(
+							message.chat.id,
+							text = f'Тариф пользователя {user_id} изменён на {message.text}')
+					else:
+						await bot.send_message(message.chat.id, text = 'Неверный номер тарифа...')
+
+			if state.startswith('ADD_DEVICE'):
+				if state.startswith('ADD_DEVICE_ID'):
+					if integer_regexp.fullmatch(message.text):
+						device_id = int(message.text)
+						await bot.send_message(
+							message.chat.id,
+							text = 'Выберите пользователя, владеющего устройством',
+							reply_markup = get_users_page_keyboard(f'add_device_to_user,{device_id}', 0))
+						Postgre.set_chat_state(message.chat.id, 'ADD_DEVICE_TO_USER')
+					else:
+						await bot.send_message(
+							message.chat.id,
+							text = 'Неверный формат серийного номера...')
+				if state.startswith('ADD_DEVICE_TO_USER'):
+					await bot.send_message(
+						message.chat.id,
+						text = 'Завершите или отмените добавление устройства перед выполнением других действий')
+				if state.startswith('ADD_DEVICE_SET_TARIFF'):
+					device_id = state.split(',')[1]
+					if message.text in (str(tariff_id) 
+						for tariff_id, _, _, _ 
+						in Postgre.get_tariffs()):
+						Postgre.add_device_tariff(device_id, message.text)
+						await bot.send_message(
+							message.chat.id,
+							text = f'Добавлено устройство с серийным номером {device_id} и тарифом {message.text}')
+						Postgre.set_chat_state(message.chat.id, '')
+			if state.startswith('DEL_DEVICE'):
+				if state.startswith('DEL_DEVICE_USER_ID'):
+					await bot.send_message(
+						message.chat.id, 
+						text = 'Завершите удаление устройства или отмените операцию для выполнения других действий')
+				if state.startswith('DEL_DEVICE_DEVICE_ID'):
+					user_id = state.split(',')[1]
+					if message.text in (str(device_id) for device_id in Postgre.get_user_devices(user_id)):
+						Postgre.delete_device(message.text)
+						Postgre.set_chat_state(message.chat.id, '')
+						await bot.send_message(
+							message.chat.id,
+							text = f'Устройство с ID {message.text} удалено!')
+					else:
+						await bot.send_message(message.chat.id, text = 'Неверный ID устройства...')
+			if state.startswith('ADD_DEVICE_TARIFF'):
+				if state.startswith('ADD_DEVICE_TARIFF_USER_ID'):
+					await bot.send_message(
+						message.chat.id,
+						text = 'Завершите добавление тарифа или отмените операцию для выполнения других действий')
+				if state.startswith('ADD_DEVICE_TARIFF_DEVICE_ID'):
+					user_id = state.split(',')[1]
+					if message.text in (str(device_id) for device_id in Postgre.get_user_devices(user_id)):
+						Postgre.set_chat_state(message.chat.id, f'ADD_DEVICE_TARIFF_SET_TARIFF,{message.text}')
+
+						tariffs_list_str = '\n'.join(
+							f'{tariff_id}) {tariff_name} - {tariff_cost} руб./у.е.'
+							for tariff_id, tariff_name, _, tariff_cost
+							in Postgre.get_tariffs())
+						await bot.send_message(
+							message.chat.id,
+							text = 'Введите номер тарифа для добавления устройству:\n' + tariffs_list_str,
+							reply_markup = cancel_keyboard)
+					else:
+						await bot.send_message(message.chat.id, text = 'Неверный ID устройства...')
+				if state.startswith('ADD_DEVICE_TARIFF_SET_TARIFF'):
+					device_id = state.split(',')[1]
+					if message.text in (str(tariff_id)
+						for tariff_id, _, _, _
+						in Postgre.get_tariffs()):
+						if message.text in (str(tariff_id)
+							for tariff_id
+							in Postgre.get_device_tariffs(device_id)):
+							await bot.send_message(
+								message.chat.id,
+								text = 'Этот тариф уже добавлен этому устройству: ' \
+								'введите другой номер тарифа или отмените добавление тарифа')
+						else:
+							Postgre.add_device_tariff(device_id, message.text)
+							Postgre.set_chat_state(message.chat.id, '')
+
+							await bot.send_message(
+								message.chat.id,
+								text = f'Устройству с ID {device_id} был добавлен тариф {message.text}')
+					else:
+						await bot.send_message(message.chat.id, text = 'Неверный номер тарифа')
+
 
 		# Обработка админских кнопок
 		elif message.text in Action.ADMIN_ACTIONS:
@@ -217,7 +340,11 @@ async def process_message(message):
 						reply_markup = get_users_page_keyboard('delete_user', 0))
 					Postgre.set_chat_state(message.chat.id, 'DEL_USER')
 				case Action.UPDATE_USER:
-					pass
+					await bot.send_message(
+						message.chat.id,
+						text = 'Выберите пользователя, тариф которого хотите изменить',
+						reply_markup = get_users_page_keyboard('update_user_tariff', 0))
+					Postgre.set_chat_state(message.chat.id, 'UPDATE_USER_USER_SELECT')
 				case Action.ADD_TARIFF:
 					pass
 				case Action.DEL_TARIFF:
@@ -225,9 +352,23 @@ async def process_message(message):
 				case Action.UPDATE_TARIFF:
 					pass
 				case Action.ADD_DEVICE:
-					pass
+					await bot.send_message(
+						message.chat.id,
+						text = 'Введите серийный номер (ID) добавляемого устройства (1-6 цифр):',
+						reply_markup = cancel_keyboard)
+					Postgre.set_chat_state(message.chat.id, 'ADD_DEVICE_ID')
 				case Action.DEL_DEVICE:
-					pass
+					await bot.send_message(
+						message.chat.id,
+						text = 'Выберите пользователя, устройство которого хотите удалить',
+						reply_markup = get_users_page_keyboard('delete_device', 0))
+					Postgre.set_chat_state(message.chat.id, 'DEL_DEVICE_USER_ID')
+				case Action.ADD_DEVICE_TARIFF:
+					Postgre.set_chat_state(message.chat.id, 'ADD_DEVICE_TARIFF_USER_ID')
+					await bot.send_message(
+						message.chat.id,
+						text = 'Выберите пользователя, устройству которого вы хотите добавить тариф',
+						reply_markup = get_users_page_keyboard('add_device_tariff', 0))
 
 		else:
 			await send_error(message)
@@ -292,12 +433,83 @@ async def delete_user(call):
 @bot.callback_query_handler(func=lambda call: call.data.split(',')[0] == 'delete_user_confirmed')
 async def delete_user_confirmed(call):
 	await remove_inline_reply_markup(call)
-	user_id = call.data.split(',')[1]
-	Postgre.delete_user(user_id)
 	Postgre.set_chat_state(call.message.chat.id, '')
+	user_id = int(call.data.split(',')[1])
+	if Postgre.is_admin(user_id) and user_id != Postgre.get_user_id_for_chat(call.message.chat.id):
+		await bot.send_message(
+			call.message.chat.id,
+			text = f'Вы не можете удалить аккаунт другого администратора через бота!')
+	else:
+		Postgre.delete_user(user_id)
+		await bot.send_message(
+			call.message.chat.id,
+			text = f'Пользователь с ID {user_id} удалён')
+
+# Изменение тарифа
+@bot.callback_query_handler(func=lambda call: call.data.split(',')[0] == 'update_user_tariff')
+async def update_user_tariff(call):
+	await remove_inline_reply_markup(call)
+
+	user_id = call.data.split(',')[1]
+	Postgre.set_chat_state(call.message.chat.id, f'UPDATE_USER_TARIFF,{user_id}')
+
+	discounts_list = Postgre.get_discounts()
+	discounts_list_str = '\n'.join((f'{discount_id}) {discount_name}' for discount_id, discount_name in discounts_list))
+
+	await bot.send_message(
+		call.message.chat.id, 
+		text='Введите номер нового тарифа для выбранного пользователя:\n' + discounts_list_str,
+		reply_markup = cancel_keyboard)
+
+# Привязка устройства к пользователю в процессе добавления
+@bot.callback_query_handler(func=lambda call: call.data.split(',')[0] == 'add_device_to_user')
+async def link_device_to_user(call):
+	await remove_inline_reply_markup(call)
+
+	device_id, user_id = map(int, call.data.split(',')[1:])
+
+	Postgre.add_device(user_id, device_id)
+	Postgre.set_chat_state(call.message.chat.id, f'ADD_DEVICE_SET_TARIFF,{device_id}')
+
+	tariffs_list_str = '\n'.join(
+		f'{tariff_id}) {tariff_name} - {tariff_cost} руб./у.е.'
+		for tariff_id, tariff_name, _, tariff_cost
+		in Postgre.get_tariffs())
+
 	await bot.send_message(
 		call.message.chat.id,
-		text = f'Пользователь с ID {user_id} удалён')
+		text = 'Введите номер тарифа для устройства:\n' + tariffs_list_str,
+		reply_markup = cancel_keyboard)
+
+# Удаление устройства пользователя
+@bot.callback_query_handler(func=lambda call: call.data.split(',')[0] == 'delete_device')
+async def delete_device(call):
+	await remove_inline_reply_markup(call)
+
+	user_id = call.data.split(',')[1]
+
+	Postgre.set_chat_state(call.message.chat.id, f'DEL_DEVICE_DEVICE_ID,{user_id}')
+
+	devices_list = '\n'.join(map(str, Postgre.get_user_devices(user_id)))
+	await bot.send_message(
+		call.message.chat.id,
+		text = 'Введите ID устройства, которое хотите удалить:\n' + devices_list,
+		reply_markup = cancel_keyboard)
+
+# Добавление тарифа устройству
+@bot.callback_query_handler(func=lambda call: call.data.split(',')[0] == 'add_device_tariff')
+async def add_device_tariff(call):
+	await remove_inline_reply_markup(call)
+
+	user_id = call.data.split(',')[1]
+
+	Postgre.set_chat_state(call.message.chat.id, f'ADD_DEVICE_TARIFF_DEVICE_ID,{user_id}')
+
+	devices_list = '\n'.join(map(str, Postgre.get_user_devices(user_id)))
+	await bot.send_message(
+		call.message.chat.id,
+		text = 'Введите ID устройства, которому хотите добавить тариф:\n' + devices_list,
+		reply_markup = cancel_keyboard)
 
 @bot.message_handler(func=lambda message: True)
 async def send_error(message):

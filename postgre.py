@@ -26,6 +26,10 @@ def unlink_chat_from_user(chat_id):
 	cursor.execute("Call delete_session (%s)", ([chat_id]))
 	connection.commit()
 
+def get_users():
+	cursor.execute ("Select * from show_users")
+	return cursor.fetchall()
+
 def is_admin(user_id):
 	cursor.execute("Call check_is_admin (%s, False)", ([user_id]))
 	return cursor.fetchall()[0][0]
@@ -38,7 +42,7 @@ def set_chat_state(chat_id, state):
 	cursor.execute("Call change_state (%s, %s)", ([chat_id, state]))
 	connection.commit()
 
-def get_discounts_list():
+def get_discounts():
 	cursor.execute("Select * from show_discounts")
 	return cursor.fetchall()
 
@@ -46,10 +50,35 @@ def add_user(phone_number, user_is_admin, discount_type_id):
 	cursor.execute("Call add_user (%s, %s, %s)", ([phone_number, discount_type_id, user_is_admin]))
 	connection.commit()
 
-def delete_user (user_id):
+def delete_user(user_id):
 	cursor.execute("Call delete_user (%s)", ([user_id]))
 	connection.commit()
 
-def get_users():
-	cursor.execute ("Select * from show_users")
+def update_user_tariff(user_id, discount_type_id):
+	cursor.execute("Call update_user_tariff(%s, %s)", ([user_id, discount_type_id]))
+	connection.commit()
+
+def add_device(user_id, device_id):
+	cursor.execute("Call add_device(%s, %s)", ([user_id, device_id]))
+	connection.commit()
+
+def delete_device(device_id):
+    cursor.execute("Call delete_device (%s)", ([device_id]))
+    connection.commit()
+
+def get_device_tariffs(device_id):
+	cursor.execute("Select * from get_device_tariffs(%s)", ([device_id]))
+	return tuple(row[0] for row in cursor.fetchall())
+
+def add_device_tariff(device_id, tariff_id):
+	cursor.execute("Call add_tariff_to_device(%s, %s)", ([device_id, tariff_id]))
+	connection.commit()
+
+def get_user_devices(user_id):
+	cursor.execute("Select * FROM get_user_devices(%s::smallint)", ([user_id]))
+	return tuple(row[0] for row in cursor.fetchall())
+
+def get_tariffs():
+	cursor.execute ("Select * from show_available_tariffs")
 	return cursor.fetchall()
+

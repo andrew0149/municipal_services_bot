@@ -8,8 +8,9 @@ DEL_TARIFF = 'Удалить тариф'
 UPDATE_TARIFF = 'Обновить стоимость тарифа'
 ADD_DEVICE = 'Добавить устройство'
 DEL_DEVICE = 'Удалить устройство'
+ADD_DEVICE_TARIFF = 'Добавить тариф устройству'
 
-ADMIN_ACTIONS = ( ADD_USER, DEL_USER, UPDATE_USER, ADD_TARIFF, DEL_TARIFF, UPDATE_TARIFF, ADD_DEVICE, DEL_DEVICE )
+ADMIN_ACTIONS = ( ADD_USER, DEL_USER, UPDATE_USER, ADD_TARIFF, DEL_TARIFF, UPDATE_TARIFF, ADD_DEVICE, DEL_DEVICE, ADD_DEVICE_TARIFF )
 
 # альтернативная раскладка
 
@@ -18,13 +19,14 @@ ADMIN_ACTIONS = ( ADD_USER, DEL_USER, UPDATE_USER, ADD_TARIFF, DEL_TARIFF, UPDAT
 # 	(2,),
 # 	(3, 4),
 # 	(5,),
-# 	(6, 7)
+# 	(6, 7),
+# 	(8)
 # )
 
 ADMIN_MARKUP = (
 	(0, 1, 2),
 	(3, 4, 5),
-	(6, 7)
+	(6, 7, 8),
 )
 
 GET_TARIFFS = 'Просмотреть тарифы'
