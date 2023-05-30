@@ -275,6 +275,38 @@ async def process_message(message):
 							text = f'Тариф с ID {message.text} был удалён')
 					else:
 						await bot.send_message(message.chat.id, text = 'Неверный ID тарифа...')
+			if state.startswith('UPDATE_TARIFF'):
+				if state.startswith('UPDATE_TARIFF_TARIFF_ID'):
+					if message.text in (str(tariff_id) for tariff_id, _, _, _ in Postgre.get_tariffs()):
+						Postgre.set_chat_state(message.chat.id, f'UPDATE_TARIFF_TARIFF_NAME,{message.text}')
+						await bot.send_message(
+							message.chat.id,
+							text = 'Введите новое имя тарифа или -1, если не хотите его менять',
+							reply_markup = cancel_keyboard)
+					else:
+						await bot.send_message(message.chat.id, text = 'Неверный ID тарифа...')
+				if state.startswith('UPDATE_TARIFF_TARIFF_NAME'):
+					if name_regexp.fullmatch(message.text):
+						tariff_id = state.split(',')[1]
+						Postgre.set_chat_state(message.chat.id, f'UPDATE_TARIFF_TARIFF_COST,{tariff_id},{message.text}')
+						await bot.send_message(
+							message.chat.id, 
+							text = 'Введите новую стоимость тарифа',
+							reply_markup = cancel_keyboard)
+					else:
+						await bot.send_message(
+							message.chat.id, 
+							text = 'Неверный формат имени устройства: '\
+							'используйте только буквы, пробелы, обычные скобки и дефисы')
+				if state.startswith('UPDATE_TARIFF_TARIFF_COST'):
+					tariff_cost = message.text.replace(',', '.')
+					if float_regexp.fullmatch(message.text) and float(tariff_cost) >= 0.01:
+						_, tariff_id, tariff_name = state.split(',')
+						Postgre.set_chat_state(message.chat.id, '')
+						Postgre.update_tariff(tariff_id, tariff_cost, tariff_name)
+						await bot.send_message(
+							message.chat.id,
+							text = f'Имя и стоимость тарифа с ID {tariff_id} обновлены')
 
 			if state.startswith('ADD_DEVICE'):
 				if state.startswith('ADD_DEVICE_ID'):
@@ -386,6 +418,7 @@ async def process_message(message):
 						text = 'Выберите пользователя, тариф которого хотите изменить',
 						reply_markup = get_users_page_keyboard('update_user_tariff', 0))
 					Postgre.set_chat_state(message.chat.id, 'UPDATE_USER_USER_SELECT')
+
 				case Action.ADD_TARIFF:
 					Postgre.set_chat_state(message.chat.id, 'ADD_TARIFF_NAME')
 					await bot.send_message(
@@ -403,7 +436,16 @@ async def process_message(message):
 						text = 'Введите ID тарифа, который хотите удалить:\n' + tariffs_list_str,
 						reply_markup = cancel_keyboard)
 				case Action.UPDATE_TARIFF:
-					pass
+					Postgre.set_chat_state(message.chat.id, 'UPDATE_TARIFF_TARIFF_ID')
+					tariffs_list_str = '\n'.join(
+						f'{tariff_id}) {tariff_name} - {tariff_cost} руб./у.е.'
+						for tariff_id, tariff_name, _, tariff_cost
+						in Postgre.get_tariffs())
+					await bot.send_message(
+						message.chat.id,
+						text = 'Введите ID тарифа, который хотите изменить:\n' + tariffs_list_str,
+						reply_markup = cancel_keyboard)
+
 				case Action.ADD_DEVICE:
 					await bot.send_message(
 						message.chat.id,

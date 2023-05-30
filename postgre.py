@@ -66,6 +66,10 @@ def delete_tariff(tariff_id):
     cursor.execute("Call delete_tariff (%s)", ([tariff_id]))
     connection.commit()
 
+def update_tariff(tariff_id, tariff_cost, tariff_name):
+	cursor.execute("Call update_tariff(%s, %s, %s)", ([tariff_id, tariff_cost, tariff_name]))
+	connection.commit()
+
 def add_device(user_id, device_id):
 	cursor.execute("Call add_device(%s, %s)", ([user_id, device_id]))
 	connection.commit()
