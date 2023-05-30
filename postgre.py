@@ -58,6 +58,14 @@ def update_user_tariff(user_id, discount_type_id):
 	cursor.execute("Call update_user_tariff(%s, %s)", ([user_id, discount_type_id]))
 	connection.commit()
 
+def add_tariff(tariff_name, tariff_cost):
+	cursor.execute("Call add_tariff (%s, %s)", ([tariff_name, tariff_cost]))
+	connection.commit()
+
+def delete_tariff(tariff_id):
+    cursor.execute("Call delete_tariff (%s)", ([tariff_id]))
+    connection.commit()
+
 def add_device(user_id, device_id):
 	cursor.execute("Call add_device(%s, %s)", ([user_id, device_id]))
 	connection.commit()
@@ -78,7 +86,10 @@ def get_user_devices(user_id):
 	cursor.execute("Select * FROM get_user_devices(%s::smallint)", ([user_id]))
 	return tuple(row[0] for row in cursor.fetchall())
 
+def get_devices():
+	cursor.execute("Select device_id from devices")
+	return tuple(row[0] for row in cursor.fetchall())
+
 def get_tariffs():
 	cursor.execute ("Select * from show_available_tariffs")
 	return cursor.fetchall()
-
