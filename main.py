@@ -45,7 +45,26 @@ def get_users_page_keyboard(callback, page_n):
 
 	return keyboard
 
+def get_user_bills_payment_keyboard(user_id):
+	bills = Postgre.get_user_unpaid_bills(user_id)
+	keyboard = types.InlineKeyboardMarkup()
+
+	for bill in bills:
+		creation_date, total = bill
+		keyboard.add(
+			types.InlineKeyboardButton(
+				text = f'Оплатить квитанцию от {creation_date} на сумму {total} рублей',
+				callback_data = f'pay_bills,{user_id},{creation_date},{total}'))
+
+	keyboard.add(
+		types.InlineKeyboardButton(
+			text = '❌ Отменить действие',
+			callback_data = 'cancel'))
+
+	return keyboard
+
 async def remove_inline_reply_markup(call):
+
 	await bot.edit_message_reply_markup(
 		call.message.chat.id,
 		call.message.message_id,
@@ -94,14 +113,14 @@ async def send_welcome(message):
 					lambda index: Action.ADMIN_ACTIONS[index], 
 					row), 
 				row_width=len(row))
+
 	# а пользователю - пользовательские
-	else:
-		for row in Action.USER_MARKUP:
-			markup.add(
-				*map(
-					lambda index: Action.USER_ACTIONS[index], 
-					row), 
-				row_width=len(row))
+	for row in Action.USER_MARKUP:
+		markup.add(
+			*map(
+				lambda index: Action.USER_ACTIONS[index], 
+				row), 
+			row_width=len(row))
 	
 	# если пользователь вызывал не справку, здороваемся
 	if message.text != '/help':
@@ -202,10 +221,13 @@ async def process_message(message):
 
 				Postgre.set_chat_state(message.chat.id, ','.join(('ADD_USER_DISCOUNT', parsed_phone, new_user_is_admin)))
 				discounts_list = Postgre.get_discounts()
-				discounts_list_str = '\n'.join((f'{discount_id}) {discount_name}' for discount_id, discount_name in discounts_list))
+				discounts_list_str = '\n'.join((
+					f'{discount_id}) {discount_name}' 
+					for discount_id, discount_name 
+					in discounts_list))
 				await bot.send_message(
 					message.chat.id, 
-					text='Введите номер тарифа для нового пользователя:\n' + discounts_list_str,
+					text='Введите номер льготы для нового пользователя:\n' + discounts_list_str,
 					reply_markup = cancel_keyboard)
 			if state.startswith('ADD_USER_DISCOUNT'):
 				_, parsed_phone, parsed_new_user_is_admin = state.split(',')
@@ -214,11 +236,11 @@ async def process_message(message):
 					await bot.send_message(
 						message.chat.id,
 						text = f'Добавлен пользователь с номером телефона {parsed_phone}, ' +
-							f'тарифом {int(message.text)}, ' +
+							f'льготой {int(message.text)}, ' +
 							('не' if parsed_new_user_is_admin == 'false' else '') + ' являющийся администратором.')
 					Postgre.set_chat_state(message.chat.id, '')
 				else:
-					await bot.send_message(message.chat.id, text='Неверный номер тарифа...')
+					await bot.send_message(message.chat.id, text='Неверный номер льготы...')
 		if state.startswith('DEL_USER'):
 			await bot.send_message(
 				message.chat.id,
@@ -227,7 +249,7 @@ async def process_message(message):
 			if state.startswith('UPDATE_USER_USER_SELECT'):
 				await bot.send_message(
 					message.chat.id,
-					text = 'Завершите изменение тарифа пользователя или отмените операцию для выполнения других действий')
+					text = 'Завершите изменение льготы пользователя или отмените операцию для выполнения других действий')
 			if state.startswith('UPDATE_USER_TARIFF'):
 				if message.text in (str(discount_id) for discount_id, _ in Postgre.get_discounts()):
 					user_id = state.split(',')[1]
@@ -237,7 +259,81 @@ async def process_message(message):
 						message.chat.id,
 						text = f'Тариф пользователя {user_id} изменён на {message.text}')
 				else:
-					await bot.send_message(message.chat.id, text = 'Неверный номер тарифа...')
+					await bot.send_message(message.chat.id, text = 'Неверный номер льготы...')
+
+		if state.startswith('ADD_DISCOUNT'):
+			if state.startswith('ADD_DISCOUNT_DISCOUNT_NAME'):
+				if name_regexp.fullmatch(message.text):
+					Postgre.set_chat_state(message.chat.id, f'ADD_DISCOUNT_DISCOUNT,{message.text}')
+
+					await bot.send_message(
+						message.chat.id,
+						text = 'Введите размер льготы в процентах:',
+						reply_markup = cancel_keyboard)
+				else:
+					await bot.send_message(
+						message.chat.id,
+						text = 'Неверный формат имени льготы:'\
+						'используйте только буквы, пробелы, обычные скобки и дефисы')
+			if state.startswith('ADD_DISCOUNT_DISCOUNT,'):
+				discount = message.text.replace(',', '.')
+				if float_regexp.fullmatch(discount) and float(discount) < 100:
+					Postgre.set_chat_state(message.chat.id, '')
+					
+					discount = float(discount) / 100
+					discount_name = state.split(',')[1]
+
+					Postgre.add_discount(discount, discount_name)
+					await bot.send_message(
+						message.chat.id,
+						text = f'Добавлена льгота "{discount_name}" в размере {message.text}%"')
+				else:
+					await bot.send_message(message.chat.id, text = 'Вы ввели не число или слишком большое число...')
+		if state.startswith('DEL_DISCOUNT'):
+			if state.startswith('DEL_DISCOUNT_DISCOUNT_ID'):
+				if message.text in (str(discount_id) for discount_id, _ in Postgre.get_discounts()):
+					Postgre.set_chat_state(message.chat.id, '')
+
+					Postgre.delete_discount(message.text)
+					await bot.send_message(
+						message.chat.id,
+						text = f'Льгота номер {message.text} была удалена')
+				else:
+					await bot.send_message(message.chat.id, text = 'Неверный номер льготы...')
+		if state.startswith('UPDATE_DISCOUNT'):
+			if state.startswith('UPDATE_DISCOUNT_DISCOUNT_ID'):
+				if message.text in (str(discount_id) for discount_id, _ in Postgre.get_discounts()):
+					Postgre.set_chat_state(message.chat.id, f'UPDATE_DISCOUNT_DISCOUNT_NAME,{message.text}')
+
+					await bot.send_message(
+						message.chat.id,
+						text = 'Введите новое название льготы:',
+						reply_markup = cancel_keyboard)
+				else:
+					await bot.send_message(message.chat.id, text = 'Неверный номер льготы...')
+			if state.startswith('UPDATE_DISCOUNT_DISCOUNT_NAME'):
+				discount_id = state.split(',')[1]
+				if name_regexp.fullmatch(message.text):
+					Postgre.set_chat_state(message.chat.id, f'UPDATE_DISCOUNT_DISCOUNT,{discount_id},{message.text}')
+
+					await bot.send_message(
+						message.chat.id,
+						text = 'Введите новый размер льготы:',
+						reply_markup = cancel_keyboard)
+			if state.startswith('UPDATE_DISCOUNT_DISCOUNT,'):
+				discount = message.text.replace(',', '.')
+				if float_regexp.fullmatch(discount) and float(discount) < 100:
+					_, discount_id, discount_name = state.split(',')
+					discount = float(discount) / 100
+
+					Postgre.set_chat_state(message.chat.id, '')
+					Postgre.update_discount(discount_id, discount, discount_name)
+
+					await bot.send_message(
+						message.chat.id,
+						text = f'Льготе номер {discount_id} установлено имя "{discount_name}" и размер {message.text}%')
+				else:
+					await bot.send_message(message.chat.id, text = 'Вы ввели не число или слишком большое число...')
 
 		if state.startswith('ADD_TARIFF'):
 			if state.startswith('ADD_TARIFF_NAME'):
@@ -251,7 +347,7 @@ async def process_message(message):
 				else:
 					await bot.send_message(
 						message.chat.id, 
-						text = 'Неверный формат имени устройства: '\
+						text = 'Неверный формат имени тарифа: '\
 						'используйте только буквы, пробелы, обычные скобки и дефисы')
 			if state.startswith('ADD_TARIFF_COST'):
 				tariff_cost = message.text.replace(',', '.')
@@ -295,7 +391,7 @@ async def process_message(message):
 				else:
 					await bot.send_message(
 						message.chat.id, 
-						text = 'Неверный формат имени устройства: '\
+						text = 'Неверный формат имени тарифа: '\
 						'используйте только буквы, пробелы, обычные скобки и дефисы')
 			if state.startswith('UPDATE_TARIFF_TARIFF_COST'):
 				tariff_cost = message.text.replace(',', '.')
@@ -421,7 +517,9 @@ async def process_message(message):
 						text = f'Введите текущие показания для устройства "{Postgre.get_device_name(device_id)}" и тарифа {message.text}',
 						reply_markup = cancel_keyboard)
 				else:
-					await bot.send_message('Неверный номер тарифа...')
+					await bot.send_message(
+						message.chat.id,
+						text = 'Неверный номер тарифа...')
 			if state.startswith('UPDATE_MEASUREMENTS_MEASUREMENT'):
 				_, device_id, tariff_id = state.split(',')
 				measurement = message.text.replace(',', '.')
@@ -439,6 +537,33 @@ async def process_message(message):
 						await bot.send_message(message.chat.id, text = 'Текущие показания не могут быть меньше предыдущих')
 				else:
 					await bot.send_message(message.chat.id, text = 'Вы ввели не число...')
+		if state.startswith('EDIT_DEVICE'):
+			if state.startswith('EDIT_DEVICE_DEVICE_ID'):
+				if message.text in (str(device_id) 
+					for device_id
+					in Postgre.get_user_devices(user_id)):
+
+					Postgre.set_chat_state(message.chat.id, f'EDIT_DEVICE_DEVICE_NAME,{message.text}')
+					await bot.send_message(
+						message.chat.id,
+						text = f'Введите новое имя устройства:',
+						reply_markup = cancel_keyboard)
+				else:
+					await bot.send_message(message.chat.id, text = 'Неверный ID устройства...')
+			if state.startswith('EDIT_DEVICE_DEVICE_NAME'):
+				if name_regexp.fullmatch(message.text):
+					device_id = state.split(',')[1]
+					Postgre.update_device_name(device_id, message.text)
+					Postgre.set_chat_state(message.chat.id, '')
+					await bot.send_message(
+						message.chat.id,
+						text = f'Устройству с ID {device_id} установлено имя "{message.text}"')
+				else:
+					await bot.send_message(
+						message.chat.id,
+						text = 'Неверный формат имени устройства: '\
+							'используйте только буквы, пробелы, обычные скобки и дефисы')
+
 
 	else:
 		if (Postgre.is_admin(user_id) 
@@ -447,12 +572,12 @@ async def process_message(message):
 			print(f'ADMIN ACTION --- chat_id={message.chat.id} action="{message.text}"')
 			match message.text:
 				case Action.ADD_USER:
+					Postgre.set_chat_state(message.chat.id, 'ADD_USER_PHONE')
 					await bot.send_message(
 						message.chat.id,
 						text = 'Введите номер телефона для которого хотите добавить аккаунт в формате "+79123456789"',
 						reply_markup = cancel_keyboard)
-					Postgre.set_chat_state(message.chat.id, 'ADD_USER_PHONE')
-				case Acion.DEL_USER:
+				case Action.DEL_USER:
 					Postgre.set_chat_state(message.chat.id, 'DEL_USER')
 					await bot.send_message(
 						message.chat.id,
@@ -462,8 +587,36 @@ async def process_message(message):
 					Postgre.set_chat_state(message.chat.id, 'UPDATE_USER_USER_SELECT')
 					await bot.send_message(
 						message.chat.id,
-						text = 'Выберите пользователя, тариф которого хотите изменить',
+						text = 'Выберите пользователя, льготу которого хотите изменить',
 						reply_markup = get_users_page_keyboard('update_user_tariff', 0))
+
+				case Action.ADD_DISCOUNT:
+					Postgre.set_chat_state(message.chat.id, 'ADD_DISCOUNT_DISCOUNT_NAME')
+					await bot.send_message(
+						message.chat.id,
+						text = 'Введите название новой льготы:',
+						reply_markup = cancel_keyboard)
+				case Action.DEL_DISCOUNT:
+					Postgre.set_chat_state(message.chat.id, 'DEL_DISCOUNT_DISCOUNT_ID')
+
+					discounts_list = Postgre.get_discounts()
+					discounts_list_str = '\n'.join((
+						f'{discount_id}) {discount_name}' 
+						for discount_id, discount_name 
+						in discounts_list))
+					await bot.send_message(
+						message.chat.id,
+						text = 'Введите номер льготы, которую вы хотите удалить:\n' + discounts_list_str,
+						reply_markup = cancel_keyboard)
+				case Action.UPDATE_DISCOUNT:
+					Postgre.set_chat_state(message.chat.id, 'UPDATE_DISCOUNT_DISCOUNT_ID')
+
+					discounts_list = Postgre.get_discounts()
+					discounts_list_str = '\n'.join((f'{discount_id}) {discount_name}' for discount_id, discount_name in discounts_list))
+					await bot.send_message(
+						message.chat.id,
+						text = 'Введите номер льготы, которую хотите изменить:\n' + discounts_list_str,
+						reply_markup = cancel_keyboard)
 
 				case Action.ADD_TARIFF:
 					Postgre.set_chat_state(message.chat.id, 'ADD_TARIFF_NAME')
@@ -516,6 +669,11 @@ async def process_message(message):
 			
 			print(f'USER ACTION --- chat_id={message.chat.id} action="{message.text}"')
 			match message.text:
+				case Action.GET_DISCOUNT_TYPE:
+					discount, discount_name = Postgre.get_user_discount(user_id)
+					await bot.send_message(
+						message.chat.id, 
+						text = f'Вам установлена льгота "{discount_name}" размером {discount*100}%')
 				case Action.GET_TARIFFS:
 					tariffs_list_str = '\n'.join(
 						f'{tariff_id}) {tariff_name} - {tariff_cost} руб./у.е'
@@ -532,10 +690,10 @@ async def process_message(message):
 							in Postgre.get_user_devices(user_id))
 					await bot.send_message(
 						message.chat.id, 
-						text = 'Введите ID устройства для которого хотите подать показания:\n' + devices_list,
+						text = 'Введите ID устройства, для которого хотите подать показания:\n' + devices_list,
 						reply_markup = cancel_keyboard)
-				case Action.GET_BILL:
 
+				case Action.GET_BILL:
 					last_bill_date = Postgre.get_user_last_bill_date(user_id)
 					devices_with_old_measurements = []
 					for device_id in Postgre.get_user_devices(user_id):
@@ -548,11 +706,45 @@ async def process_message(message):
 							text = ('Для того, чтобы получить квитанцию, подайте новые показания для следующих устройств:\n' 
 								+ '\n'.join(devices_with_old_measurements)))
 					else:
-						pass # TODO: Дописать генерацию квитка, кнопки для оплаты и работу с базой
+						Postgre.create_bill(user_id)
+						last_bill = Postgre.get_user_unpaid_bills(user_id)[-1]
+						creation_date, total = last_bill
+						payment_keyboard = types.InlineKeyboardMarkup()
+						payment_keyboard.add(
+							types.InlineKeyboardButton(
+								text = f'Оплатить квитанцию от {creation_date} на {total} рублей',
+								callback_data = f'pay_bill,{user_id},{creation_date},{total}'))
+
+						await bot.send_message(
+							message.chat.id,
+							text = 'Квитанция создана.\n' \
+								f'Сумма созданной квитанции: {total} руб.',
+							reply_markup = payment_keyboard)
 				case Action.CHECK_DEBT:
-					pass # TODO: Дописать подтягивание неоплаченных квитков и кнопки как выше
+					balance = Postgre.get_user_balance(user_id)
+
+					if balance >= 0:
+						await bot.send_message(
+							message.chat.id,
+							text = 'У вас отсутствуют задолженности')
+					else:
+						await bot.send_message(
+							message.chat.id,
+							text = f'У вас присутствуют неоплаченные квитанции на сумму {-balance} рублей.\n'\
+								'Воспользуйтесь кнопками ниже, чтобы оплатить их',
+							reply_markup = get_user_bills_payment_keyboard(user_id))
+
 				case Action.EDIT_DEVICES:
-					pass # TODO: Дописать редактирование имени устройства
+					Postgre.set_chat_state(message.chat.id, f'EDIT_DEVICE_DEVICE_ID')
+					devices_list = '\n'.join(
+						f'{device_id}) {Postgre.get_device_name(device_id)}' 
+							for device_id 
+							in Postgre.get_user_devices(user_id))
+					await bot.send_message(
+						message.chat.id, 
+						text = 'Введите ID устройства, которому хотите сменить имя:\n' + devices_list,
+						reply_markup = cancel_keyboard)
+					
 		else:
 			await send_error(message)
 
@@ -623,7 +815,7 @@ async def update_user_tariff(call):
 
 	await bot.send_message(
 		call.message.chat.id, 
-		text='Введите номер нового тарифа для выбранного пользователя:\n' + discounts_list_str,
+		text='Введите номер новой льготы для выбранного пользователя:\n' + discounts_list_str,
 		reply_markup = cancel_keyboard)
 
 # Привязка устройства к пользователю в процессе добавления
@@ -675,6 +867,32 @@ async def add_device_tariff(call):
 		call.message.chat.id,
 		text = 'Введите ID устройства, которому хотите добавить тариф:\n' + devices_list,
 		reply_markup = cancel_keyboard)
+
+@bot.callback_query_handler(func=lambda call: call.data.split(',')[0] == 'pay_bill')
+async def pay_bill(call):
+	await remove_inline_reply_markup(call)
+
+	_, user_id, creation_date, total = call.data.split(',')
+
+	Postgre.pay_bill(user_id, creation_date)
+	await bot.send_message(
+		call.message.chat.id,
+		text = f'Оплачена квитанция от {creation_date} на сумму {total} рублей')
+
+@bot.callback_query_handler(func=lambda call: call.data.split(',')[0] == 'pay_bills')
+async def pay_bills(call):
+	_, user_id, creation_date, total = call.data.split(',')
+
+	Postgre.pay_bill(user_id, creation_date)
+	await bot.send_message(
+		call.message.chat.id,
+		text = f'Оплачена квитанция от {creation_date} на сумму {total} рублей')
+
+	bills_payment_keyboard = get_user_bills_payment_keyboard(user_id)
+	await bot.edit_message_reply_markup(
+		call.message.chat.id,
+		call.message.message_id,
+		reply_markup = bills_payment_keyboard)
 
 @bot.message_handler(func=lambda message: True)
 async def send_error(message):

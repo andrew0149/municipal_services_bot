@@ -1,6 +1,7 @@
 # Работа с базой данных PostgreSQL
 
 import psycopg2
+from datetime import datetime
 from config import DB_NAME, DB_USER, DB_PASS, DB_HOST, DB_PORT
 
 connection = psycopg2.connect(
@@ -57,6 +58,18 @@ def delete_user(user_id):
 
 def update_user_tariff(user_id, discount_type_id):
 	cursor.execute("Call update_user_tariff(%s, %s)", ([user_id, discount_type_id]))
+	connection.commit()
+
+def add_discount(discount, discount_name):
+	cursor.execute("Call add_discount(%s, %s)", ([discount, discount_name]))
+	connection.commit()
+
+def delete_discount(discount_type_id):
+	cursor.execute("Call delete_discount_type(%s)", ([discount_type_id]))
+	connection.commit()
+
+def update_discount(discount_type_id, discount, discount_name):
+	cursor.execute("Call update_discount_type(%s, %s, %s)", ([discount_type_id, discount, discount_name]))
 	connection.commit()
 
 def add_tariff(tariff_name, tariff_cost):
@@ -117,3 +130,29 @@ def send_measurement(device_id, tariff_id, measurement):
 def get_user_last_bill_date(user_id):
 	cursor.execute("select get_user_last_bill_date(%s)", ([user_id]))
 	return cursor.fetchall()[0][0]
+
+def create_bill(user_id):
+	cursor.execute("Call create_bill(%s)", ([user_id]))
+	connection.commit()
+
+def get_user_unpaid_bills(user_id):
+	cursor.execute("Select * from show_unpaid_bills where user_id = %s order by creation_date", ([user_id]))
+	return tuple((creation_date.isoformat(' '), total)
+		for _, creation_date, total
+		in cursor.fetchall())
+
+def get_user_balance(user_id):
+	cursor.execute("Select balance from users where user_id = %s", ([user_id]))
+	return cursor.fetchall()[0][0]
+
+def pay_bill(user_id, creation_date):
+	cursor.execute("Call pay_bill (%s, %s)", ([user_id, creation_date]))
+	connection.commit()
+
+def update_device_name(device_id, device_name):
+	cursor.execute("Call update_device_name(%s, %s)", ([device_id, device_name]))
+	connection.commit()
+
+def get_user_discount(user_id):
+	cursor.execute("Select dt.discount, dt.discount_name from users inner join discount_types dt on dt.discount_type_id = users.discount_type_id where user_id = %s", ([user_id]))
+	return cursor.fetchall()[0]
