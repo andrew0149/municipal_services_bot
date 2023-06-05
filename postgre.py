@@ -1,13 +1,14 @@
 # Работа с базой данных PostgreSQL
 
 import psycopg2
-from config import DB_NAME, DB_USER, DB_PASS, DB_HOST
+from config import DB_NAME, DB_USER, DB_PASS, DB_HOST, DB_PORT
 
 connection = psycopg2.connect(
 	dbname = DB_NAME, 
 	user = DB_USER,
 	password = DB_PASS, 
-	host = DB_HOST)
+	host = DB_HOST,
+	port = DB_PORT)
 
 cursor = connection.cursor()
 
@@ -27,7 +28,7 @@ def unlink_chat_from_user(chat_id):
 	connection.commit()
 
 def get_users():
-	cursor.execute ("Select * from show_users")
+	cursor.execute("Select * from show_users")
 	return cursor.fetchall()
 
 def is_admin(user_id):
@@ -80,7 +81,7 @@ def delete_device(device_id):
 
 def get_device_tariffs(device_id):
 	cursor.execute("Select * from get_device_tariffs(%s)", ([device_id]))
-	return tuple(row[0] for row in cursor.fetchall())
+	return cursor.fetchall()
 
 def add_device_tariff(device_id, tariff_id):
 	cursor.execute("Call add_tariff_to_device(%s, %s)", ([device_id, tariff_id]))
@@ -94,6 +95,25 @@ def get_devices():
 	cursor.execute("Select device_id from devices")
 	return tuple(row[0] for row in cursor.fetchall())
 
+def get_device_name(device_id):
+	cursor.execute("Select user_device_name from devices where device_id = %s", ([device_id]))
+	user_device_name = cursor.fetchall()[0][0]
+	return (f'Устройство {device_id}' 
+		if user_device_name is None 
+		else user_device_name)
+
 def get_tariffs():
-	cursor.execute ("Select * from show_available_tariffs")
+	cursor.execute("Select * from show_available_tariffs")
 	return cursor.fetchall()
+
+def get_last_measurement(device_id, tariff_id):
+	cursor.execute("Select * from get_last_measurement(%s, %s)", ([device_id, tariff_id]))
+	return cursor.fetchall()[0]
+
+def send_measurement(device_id, tariff_id, measurement):
+    cursor.execute("Call send_measurements(%s, %s, %s)", ([device_id, tariff_id, measurement]))
+    connection.commit()
+
+def get_user_last_bill_date(user_id):
+	cursor.execute("select get_user_last_bill_date(%s)", ([user_id]))
+	return cursor.fetchall()[0][0]
